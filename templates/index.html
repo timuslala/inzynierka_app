@@ -1,0 +1,57 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Live Breath Counter</title>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.0.1/socket.io.min.js"></script>
+    <style>
+        body { font-family: Arial, sans-serif; margin: 20px; }
+        canvas { max-width: 100%; }
+    </style>
+</head>
+<body>
+    <h1>Live Breath Counter</h1>
+    <p>Total Breaths Detected: <span id="breath-count">-</span></p>
+    <canvas id="respiratory-chart"></canvas>
+
+    <script>
+        const socket = io();
+        const ctx = document.getElementById("respiratory-chart").getContext("2d");
+        let chart;
+
+        socket.on("update", (data) => {
+            document.getElementById("breath-count").innerText = data.breath_count;
+
+            const time = Array.from({ length: data.filtered_signal.length }, (_, i) => i);
+
+            // Update chart
+            if (!chart) {
+                chart = new Chart(ctx, {
+                    type: "line",
+                    data: {
+                        labels: time,
+                        datasets: [
+                            {
+                                label: "Respiratory Signal",
+                                data: data.filtered_signal,
+                                borderColor: "blue",
+                            },
+                        ],
+                    },
+                    options: {
+                        scales: {
+                            x: { type: "linear", title: { display: true, text: "Time (s)" } },
+                            y: { title: { display: true, text: "Amplitude" } },
+                        },
+                    },
+                });
+            } else {
+                chart.data.datasets[0].data = data.filtered_signal;
+                chart.update();
+            }
+        });
+    </script>
+</body>
+</html>
