@@ -1,3 +1,5 @@
+import time
+
 from flask import Flask, render_template
 from flask_socketio import SocketIO, emit
 from queue import Queue
@@ -51,16 +53,17 @@ def shimmer_handler(pkt: DataPacket):
         ready_to_display.set()
 
 def shimmer_thread():
+    print("Starting shimmer thread")
     serial = Serial("COM6", DEFAULT_BAUDRATE)
     shim_dev = ShimmerBluetooth(serial)
     shim_dev.initialize()
     shim_dev.set_sensors(sensors=[ESensorGroup.ACCEL_WR])
     shim_dev.add_stream_callback(shimmer_handler)
     shim_dev.start_streaming()
-    try:
-        threading.Event().wait()
-    except:
-        shim_dev.stop_streaming()
+
+    time.sleep(60)
+    print("Stopping shimmer thread")
+    shim_dev.stop_streaming()
 
 @app.route("/")
 def index():
@@ -83,6 +86,9 @@ def process_data():
         ready_to_display.clear()
 
 if __name__ == "__main__":
-    threading.Thread(target=shimmer_thread, daemon=True).start()
-    threading.Thread(target=process_data, daemon=True).start()
+    import os
+    if os.environ.get("WERKZEUG_RUN_MAIN") == "true":  # Only run threads in the reloader process
+        threading.Thread(target=shimmer_thread, daemon=True).start()
+        threading.Thread(target=process_data, daemon=True).start()
+    time.sleep(20)
     socketio.run(app, debug=True)
