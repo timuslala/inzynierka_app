@@ -17,41 +17,57 @@
     <canvas id="respiratory-chart"></canvas>
 
     <script>
-        const socket = io();
-        const ctx = document.getElementById("respiratory-chart").getContext("2d");
-        let chart;
+    const socket = io();
+    const ctx = document.getElementById("respiratory-chart").getContext("2d");
+    let chart;
+    const SAMPLE_RATE = 48.72; // Ensure this matches the server-side sample rate
 
-        socket.on("update", (data) => {
-            document.getElementById("breath-count").innerText = data.breath_count;
+    socket.on("update", (data) => {
+        document.getElementById("breath-count").innerText = data.breath_count;
 
-            const time = Array.from({ length: data.filtered_signal.length }, (_, i) => i);
+        const windowLength = data.filtered_signal.length;
+        const time = Array.from({ length: windowLength }, (_, i) => i / SAMPLE_RATE);
 
-            // Update chart
-            if (!chart) {
-                chart = new Chart(ctx, {
-                    type: "line",
-                    data: {
-                        labels: time,
-                        datasets: [
-                            {
-                                label: "Respiratory Signal",
-                                data: data.filtered_signal,
-                                borderColor: "blue",
+        // Update chart dynamically
+        if (!chart) {
+            chart = new Chart(ctx, {
+                type: "line",
+                data: {
+                    labels: time,
+                    datasets: [
+                        {
+                            label: "Respiratory Signal",
+                            data: data.filtered_signal,
+                            borderColor: "blue",
+                            fill: false,
+                        },
+                    ],
+                },
+                options: {
+                    animation: false, // Disable animation for smooth updates
+                    scales: {
+                        x: {
+                            type: "linear",
+                            title: { display: true, text: "Time (s)" },
+                            ticks: {
+                                stepSize: 1,
                             },
-                        ],
-                    },
-                    options: {
-                        scales: {
-                            x: { type: "linear", title: { display: true, text: "Time (s)" } },
-                            y: { title: { display: true, text: "Amplitude" } },
+                        },
+                        y: {
+                            title: { display: true, text: "Amplitude" },
                         },
                     },
-                });
-            } else {
-                chart.data.datasets[0].data = data.filtered_signal;
-                chart.update();
-            }
-        });
-    </script>
+                },
+            });
+        } else {
+            // Update chart data and labels
+            chart.data.labels = time;
+            chart.data.datasets[0].data = data.filtered_signal;
+            chart.update();
+        }
+    });
+</script>
+
+
 </body>
 </html>

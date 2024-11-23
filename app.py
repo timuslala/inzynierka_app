@@ -1,5 +1,5 @@
 import time
-
+from collections import deque
 from flask import Flask, render_template
 from flask_socketio import SocketIO, emit
 from queue import Queue
@@ -21,8 +21,8 @@ BUFFER_SIZE = 60 * SAMPLE_RATE  # One minute of data
 LOW_CUT, HIGH_CUT = 0.1, 0.5  # Bandpass filter range (Hz)
 MIN_PEAK_DISTANCE = int(1.5 * SAMPLE_RATE)  # Minimum peak distance (in samples)
 
-# Thread-safe queue for data
-data_queue = Queue(maxsize=int(BUFFER_SIZE))
+# Thread-safe deque for sliding window
+data_buffer = deque(maxlen=int(BUFFER_SIZE))
 ready_to_display = threading.Event()
 
 def butter_bandpass(lowcut, highcut, fs, order=4):
@@ -42,15 +42,32 @@ def detect_breaths(data, sample_rate):
     breath_count = min(len(peaks), len(valleys))
     return breath_count, filtered_signal
 
+
 def shimmer_handler(pkt: DataPacket):
     accel_x = pkt[EChannelType.ACCEL_LSM303DLHC_X] * 9.81 / 16000
     accel_y = pkt[EChannelType.ACCEL_LSM303DLHC_Y] * 9.81 / 16000
     accel_z = pkt[EChannelType.ACCEL_LSM303DLHC_Z] * 9.81 / 16000
     absolute_acceleration = math.sqrt(accel_x**2 + accel_y**2 + accel_z**2)
-    if not data_queue.full():
-        data_queue.put(absolute_acceleration)
-    if data_queue.qsize() >= SAMPLE_RATE * 10:
+
+    # Add new data to the sliding window
+    data_buffer.append(absolute_acceleration)
+    if len(data_buffer) >= SAMPLE_RATE * 10:  # Trigger update for at least 10 seconds of data
         ready_to_display.set()
+
+def process_data():
+    while True:
+        ready_to_display.wait()
+
+        # Copy data from the buffer for processing
+        data = list(data_buffer)
+        breath_count, filtered_signal = detect_breaths(data, SAMPLE_RATE)
+
+        # Emit sliding window data
+        socketio.emit(
+            "update", {"breath_count": breath_count, "filtered_signal": filtered_signal.tolist()}
+        )
+        ready_to_display.clear()
+
 
 def shimmer_thread():
     print("Starting shimmer thread")
@@ -73,17 +90,7 @@ def index():
 def handle_connect():
     socketio.emit("status", {"message": "Connected to server"})
 
-def process_data():
-    while True:
-        ready_to_display.wait()
-        data = []
-        while not data_queue.empty():
-            data.append(data_queue.get())
-        breath_count, filtered_signal = detect_breaths(data, SAMPLE_RATE)
-        socketio.emit(
-            "update", {"breath_count": breath_count, "filtered_signal": filtered_signal.tolist()}
-        )
-        ready_to_display.clear()
+
 
 if __name__ == "__main__":
     import os
