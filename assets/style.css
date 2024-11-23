@@ -1,0 +1,22 @@
+/* Force removal of all margins and padding on html and body */
+html, body {
+    margin: 0 !important;
+    padding: 0 !important;
+    background-color: #1e1e1e; /* Match your dark mode background */
+    color: #f5f5f5; /* Match text color */
+    height: 100%;
+    width: 100%;
+    box-sizing: border-box;
+}
+
+/* Ensure all children of the body inherit the dark background */
+body > * {
+    background-color: inherit;
+}
+
+/* Optional: Normalize all elements */
+* {
+    margin: 0;
+    padding: 0;
+    box-sizing: border-box;
+}
