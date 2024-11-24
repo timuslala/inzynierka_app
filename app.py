@@ -1,6 +1,7 @@
 import dash
 from dash import dcc, html
 from dash.dependencies import Input, Output
+from dash.exceptions import PreventUpdate
 import threading
 import time
 from collections import deque
@@ -12,8 +13,8 @@ from pyshimmer.dev.channels import ESensorGroup
 
 # Parameters
 SAMPLE_RATE = 48.72  # Hz
-BUFFER_SIZE = int(60 * SAMPLE_RATE)  # One minute of data
-LOW_CUT, HIGH_CUT = 0.1, 0.5  # Bandpass filter range (Hz)
+BUFFER_SIZE = int(120 * SAMPLE_RATE)  # Two minutes of data
+LOW_CUT, HIGH_CUT = 0.05, 0.8  # Bandpass filter range (Hz)
 MIN_PEAK_DISTANCE = int(1.5 * SAMPLE_RATE)  # Minimum peak distance (in samples)
 
 # Thread-safe deques for sliding windows
@@ -35,10 +36,11 @@ dark_style = {
     "min-height": "100vh",
 }
 
-# Layout
+# Layout with Slider for Sliding Window Size
 app.layout = html.Div(
     children=[
         html.H1("Live Breath Counter", style={"text-align": "center", "margin-bottom": "20px"}),
+
         html.Div(
             id="breath-count",
             style={
@@ -50,6 +52,32 @@ app.layout = html.Div(
                 "border-radius": "5px",
                 "background-color": "#2e2e2e",
             },
+        ),
+        html.Div(
+            id="breath-frequency",
+            style={
+                "font-size": "24px",
+                "margin-bottom": "20px",
+                "text-align": "center",
+                "padding": "10px",
+                "border": "1px solid #444",
+                "border-radius": "5px",
+                "background-color": "#2e2e2e",
+            },
+        ),
+        html.Div(
+            [
+                dcc.Slider(
+                    id="sliding-window-slider",
+                    min=5,
+                    max=120,
+                    step=1,
+                    value=60,  # Default sliding window size in seconds
+                    marks={i: f"{i}s" for i in range(5, 121, 15)},
+                    tooltip={"placement": "bottom", "always_visible": True},
+                )
+            ],
+            style={"margin-bottom": "20px"},  # Style applied here
         ),
         dcc.Graph(
             id="respiratory-chart",
@@ -78,7 +106,7 @@ app.layout = html.Div(
                 "background-color": "#2e2e2e",
             },
         ),
-        dcc.Interval(id="update-interval", interval=300, n_intervals=0),  # Update every second
+        dcc.Interval(id="update-interval", interval=300, n_intervals=0),  # Update every 300 ms
     ],
 )
 
@@ -133,28 +161,41 @@ def shimmer_thread():
     [
         Output("respiratory-chart", "figure"),
         Output("breath-count", "children"),
+        Output("breath-frequency", "children"),
         Output("debug-plots", "children"),
         Output("debug-plots", "style"),
     ],
     [
         Input("update-interval", "n_intervals"),
         Input("debug-toggle", "value"),
+        Input("sliding-window-slider", "value"),
     ],
 )
-def update_charts(n_intervals, debug_toggle):
-    if len(data_buffer) < SAMPLE_RATE:  # Wait until sufficient data is available
-        return dash.no_update, dash.no_update, dash.no_update, {"display": "none"}
+def update_all_outputs(n_intervals, debug_toggle, window_size_seconds):
+    # Determine buffer size based on the sliding window
+    buffer_size = int(window_size_seconds * SAMPLE_RATE)
 
-    data = list(data_buffer)
+    # Extract the last `buffer_size` data points from the fixed-size deque
+    data = list(data_buffer)[-buffer_size:]
+    x_data = list(x_data_buffer)[-buffer_size:]
+    y_data = list(y_data_buffer)[-buffer_size:]
+    z_data = list(z_data_buffer)[-buffer_size:]
+
+    # Ensure enough data is available
+    if len(data) < SAMPLE_RATE:  # Require at least 1 second of data
+        raise dash.exceptions.PreventUpdate
+
+    # Detect breaths and filter signal
     breath_count, filtered_signal = detect_breaths(data, SAMPLE_RATE)
+    breath_frequency = (breath_count / window_size_seconds) * 60
 
-    # Time axis for the sliding window
+    # Time axis for the current sliding window
     time_axis = [i / SAMPLE_RATE for i in range(len(filtered_signal))]
 
     # Main respiratory chart
     respiratory_figure = {
         "data": [
-            {"x": time_axis, "y": filtered_signal, "type": "line", "name": "Filtered Signal"},
+            {"x": time_axis, "y": filtered_signal, "type": "scattergl", "name": "Filtered Signal"},
         ],
         "layout": {
             "title": "Respiratory Signal",
@@ -168,14 +209,10 @@ def update_charts(n_intervals, debug_toggle):
 
     # Debug plots
     if "debug" in debug_toggle:
-        x_data = list(x_data_buffer)
-        y_data = list(y_data_buffer)
-        z_data = list(z_data_buffer)
-
         debug_figures = [
             dcc.Graph(
                 figure={
-                    "data": [{"x": time_axis, "y": x_data, "type": "line", "name": "X Data"}],
+                    "data": [{"x": time_axis, "y": x_data, "type": "scattergl", "name": "X Data"}],
                     "layout": {
                         "title": "X Data",
                         "xaxis": {"title": "Time (s)", "color": dark_style["color"], "gridcolor": "#444"},
@@ -188,7 +225,7 @@ def update_charts(n_intervals, debug_toggle):
             ),
             dcc.Graph(
                 figure={
-                    "data": [{"x": time_axis, "y": y_data, "type": "line", "name": "Y Data"}],
+                    "data": [{"x": time_axis, "y": y_data, "type": "scattergl", "name": "Y Data"}],
                     "layout": {
                         "title": "Y Data",
                         "xaxis": {"title": "Time (s)", "color": dark_style["color"], "gridcolor": "#444"},
@@ -201,7 +238,7 @@ def update_charts(n_intervals, debug_toggle):
             ),
             dcc.Graph(
                 figure={
-                    "data": [{"x": time_axis, "y": z_data, "type": "line", "name": "Z Data"}],
+                    "data": [{"x": time_axis, "y": z_data, "type": "scattergl", "name": "Z Data"}],
                     "layout": {
                         "title": "Z Data",
                         "xaxis": {"title": "Time (s)", "color": dark_style["color"], "gridcolor": "#444"},
@@ -218,10 +255,13 @@ def update_charts(n_intervals, debug_toggle):
         debug_figures = []
         debug_style = {"display": "none"}
 
-    # Update breath count
+    # Update text outputs
     breath_text = f"Total Breaths Detected: {breath_count}"
+    frequency_text = f"Breath Frequency: {breath_frequency:.2f} breaths per minute"
 
-    return respiratory_figure, breath_text, debug_figures, debug_style
+    return respiratory_figure, breath_text, frequency_text, debug_figures, debug_style
+
+
 
 # Start the shimmer thread
 if __name__ == "__main__":
