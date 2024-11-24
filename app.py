@@ -121,13 +121,26 @@ def bandpass_filter(data, lowcut, highcut, fs, order=4):
     b, a = butter_bandpass(lowcut, highcut, fs, order=order)
     return filtfilt(b, a, data)
 
-# Breath detection function
+# Minimum amplitude change to count a breath
+MIN_AMPLITUDE_CHANGE = 0.08  # Adjust based on your signal characteristics
+
+# Breath detection function with amplitude threshold
 def detect_breaths(data, sample_rate):
+    # Apply the bandpass filter
     filtered_signal = bandpass_filter(data, LOW_CUT, HIGH_CUT, sample_rate)
-    peaks, _ = find_peaks(filtered_signal, distance=MIN_PEAK_DISTANCE)
-    valleys, _ = find_peaks(-filtered_signal, distance=MIN_PEAK_DISTANCE)
-    breath_count = min(len(peaks), len(valleys))
+
+    # Find peaks and valleys in the filtered signal
+    peaks, peak_props = find_peaks(filtered_signal, distance=MIN_PEAK_DISTANCE, height=MIN_AMPLITUDE_CHANGE)
+    valleys, valley_props = find_peaks(-filtered_signal, distance=MIN_PEAK_DISTANCE, height=MIN_AMPLITUDE_CHANGE)
+
+    # Only count breaths where the peak-to-valley difference exceeds the threshold
+    breath_count = 0
+    for peak, valley in zip(peaks, valleys):
+        if peak > valley and (filtered_signal[peak] - filtered_signal[valley]) >= MIN_AMPLITUDE_CHANGE:
+            breath_count += 1
+
     return breath_count, filtered_signal
+
 
 # Shimmer data acquisition
 def shimmer_handler(pkt: DataPacket):
