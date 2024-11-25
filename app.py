@@ -5,6 +5,7 @@ from dash.exceptions import PreventUpdate
 import threading
 import time
 from collections import deque
+import numpy as np
 import math
 from serial import Serial
 from scipy.signal import butter, filtfilt, find_peaks
@@ -14,8 +15,9 @@ from pyshimmer.dev.channels import ESensorGroup
 # Parameters
 SAMPLE_RATE = 48.72  # Hz
 BUFFER_SIZE = int(120 * SAMPLE_RATE)  # Two minutes of data
-LOW_CUT, HIGH_CUT = 0.05, 0.8  # Bandpass filter range (Hz)
+LOW_CUT, HIGH_CUT = 0.1, 0.5  # Bandpass filter range (Hz)
 MIN_PEAK_DISTANCE = int(1.5 * SAMPLE_RATE)  # Minimum peak distance (in samples)
+MIN_AMPLITUDE_CHANGE = 0.008  # Default minimum amplitude change
 
 # Thread-safe deques for sliding windows
 data_buffer = deque(maxlen=BUFFER_SIZE)
@@ -35,58 +37,6 @@ dark_style = {
     "padding": "20px",
     "min-height": "100vh",
 }
-
-# Ustawienia layout
-ustawienia_layout = html.Div(
-    children=[
-        html.H2("Ustawienia", style={"text-align": "center", "margin-bottom": "20px"}),
-        html.Div(
-            [
-                html.Label("Rozmiar okna przesuwnego:"),
-                dcc.Slider(
-                    id="sliding-window-slider",
-                    min=5,
-                    max=120,
-                    step=1,
-                    value=60,  # Default sliding window size in seconds
-                    marks={i: f"{i}s" for i in range(5, 121, 15)},
-                    tooltip={"placement": "bottom", "always_visible": True},
-                ),
-            ],
-            style={"margin-bottom": "20px"},
-        ),
-        html.Div(
-            [
-                html.Label("Minimalna zmiana amplitudy:"),
-                dcc.Slider(
-                    id="min-amplitude-slider",
-                    min=0.01,
-                    max=0.2,
-                    step=0.01,
-                    value=0.08,  # Default minimum amplitude change
-                    marks={i / 100: f"{i/100:.2f}" for i in range(1, 21, 2)},
-                    tooltip={"placement": "bottom", "always_visible": True},
-                ),
-            ],
-            style={"margin-bottom": "20px"},
-        ),
-        html.Div(
-            dcc.Checklist(
-                id="debug-toggle",
-                options=[{"label": "Debug Dane", "value": "debug"}],
-                value=[],
-                style={
-                    "padding": "10px",
-                    "border": "1px solid #444",
-                    "border-radius": "5px",
-                    "background-color": "#2e2e2e",
-                },
-            ),
-            style={"margin-bottom": "20px"},
-        ),
-    ],
-    style=dark_style,
-)
 
 # Main layout
 app.layout = html.Div(
@@ -122,42 +72,71 @@ app.layout = html.Div(
             config={"displayModeBar": False},
         ),
         html.Button("Ustawienia", id="ustawienia-button", n_clicks=0, style={"margin-top": "20px"}),
-        dcc.Interval(id="update-interval", interval=300, n_intervals=0),
-        html.Div(id="popup-container", style={"display": "none"}),  # Popup container for Ustawienia
+        html.Div(
+            id="ustawienia-container",
+            children=[
+                html.Div(
+                    [
+                        html.Label("Rozmiar okna przesuwnego:"),
+                        dcc.Slider(
+                            id="sliding-window-slider",
+                            min=5,
+                            max=120,
+                            step=1,
+                            value=60,
+                            marks={i: f"{i}s" for i in range(5, 121, 15)},
+                            tooltip={"placement": "bottom", "always_visible": True},
+                        ),
+                        html.Label("Minimalna zmiana amplitudy:", style={"margin-top": "20px"}),
+                        dcc.Slider(
+                            id="min-amplitude-slider",
+                            min=0.001,
+                            max=0.02,
+                            step=0.001,
+                            value=0.008,
+                            marks={i / 1000: f"{i / 1000:.3f}" for i in range(1, 21, 2)},
+                            tooltip={"placement": "bottom", "always_visible": True},
+                        ),
+                        html.Div(
+                            dcc.Checklist(
+                                id="debug-toggle",
+                                options=[{"label": "Debug Dane", "value": "debug"}],
+                                value=[],
+                                style={
+                                    "padding": "10px",
+                                    "border": "1px solid #444",
+                                    "border-radius": "5px",
+                                    "background-color": "#2e2e2e",
+                                    "margin-top": "20px",
+                                },
+                            )
+                        ),
+                    ],
+                    style={"padding": "20px", "background-color": "#1e1e1e", "border": "1px solid #444",
+                           "border-radius": "5px"},
+                )
+            ],
+            style={"margin-top": "20px", "display": "none"},  # Initially hidden
+        ),
+        dcc.Interval(id="update-interval", interval=1000, n_intervals=0),
     ],
     style=dark_style,
 )
 
-# Popup logic
+# Callback to toggle ustawienia container visibility
 @app.callback(
-    Output("popup-container", "style"),
-    Input("ustawienia-button", "n_clicks"),
+    Output("ustawienia-container", "style"),
+    [Input("ustawienia-button", "n_clicks")],
+    prevent_initial_call=True  # Optional: Prevents callback firing on initial page load
 )
-def toggle_settings_popup(n_clicks):
-    if n_clicks % 2 == 1:
-        return {"display": "block"}
-    return {"display": "none"}
+def toggle_settings_visibility(n_clicks):
+    if n_clicks is not None and n_clicks % 2 == 1:
+        # Show settings container when the button is clicked an odd number of times
+        return {"margin-top": "20px", "display": "block"}
+    # Hide settings container for even number of clicks or no clicks
+    return {"margin-top": "20px", "display": "none"}
 
-@app.callback(
-    Output("popup-container", "children"),
-    Input("popup-container", "style"),
-)
-def render_popup(style):
-    if style["display"] == "block":
-        return ustawienia_layout
-    raise PreventUpdate
-
-# Additional sliders
-@app.callback(
-    Output("sliding-window-slider", "value"),
-    Output("min-amplitude-slider", "value"),
-    Input("sliding-window-slider", "value"),
-    Input("min-amplitude-slider", "value"),
-)
-def sync_sliders(sliding_window_value, min_amplitude_value):
-    return sliding_window_value, min_amplitude_value
-
-# Main update logic
+# Callback to update outputs
 @app.callback(
     [
         Output("respiratory-chart", "figure"),
@@ -175,7 +154,7 @@ def update_all_outputs(n_intervals, window_size_seconds, min_amplitude_change):
     data = list(data_buffer)[-buffer_size:]
     if len(data) < SAMPLE_RATE:
         raise PreventUpdate
-    breath_count, filtered_signal = detect_breaths(data, SAMPLE_RATE)
+    breath_count, filtered_signal = detect_breaths(data, SAMPLE_RATE, min_amplitude_change)
     breath_frequency = (breath_count / window_size_seconds) * 60
     time_axis = [i / SAMPLE_RATE for i in range(len(filtered_signal))]
     respiratory_figure = {
@@ -195,7 +174,7 @@ def update_all_outputs(n_intervals, window_size_seconds, min_amplitude_change):
     frequency_text = f"Częstotliwość Oddechów: {breath_frequency:.2f} oddechów na minutę"
     return respiratory_figure, breath_text, frequency_text
 
-# Bandpass filter functions and detection
+# Signal processing functions
 def butter_bandpass(lowcut, highcut, fs, order=4):
     nyquist = 0.5 * fs
     low = lowcut / nyquist
@@ -206,15 +185,21 @@ def bandpass_filter(data, lowcut, highcut, fs, order=4):
     b, a = butter_bandpass(lowcut, highcut, fs, order=order)
     return filtfilt(b, a, data)
 
-def detect_breaths(data, sample_rate):
+
+def detect_breaths(data, sample_rate, min_amplitude_change):
+    # Apply bandpass filter
     filtered_signal = bandpass_filter(data, LOW_CUT, HIGH_CUT, sample_rate)
-    peaks, _ = find_peaks(filtered_signal, distance=MIN_PEAK_DISTANCE, height=MIN_AMPLITUDE_CHANGE)
-    valleys, _ = find_peaks(-filtered_signal, distance=MIN_PEAK_DISTANCE, height=MIN_AMPLITUDE_CHANGE)
-    breath_count = 0
-    for peak, valley in zip(peaks, valleys):
-        if peak > valley and (filtered_signal[peak] - filtered_signal[valley]) >= MIN_AMPLITUDE_CHANGE:
-            breath_count += 1
-    return breath_count, filtered_signal
+
+    # Smooth the signal with a moving average
+    smoothed_signal = np.convolve(filtered_signal, np.ones(5) / 5, mode='same')
+
+    # Find peaks and valleys
+    peaks, _ = find_peaks(smoothed_signal, distance=MIN_PEAK_DISTANCE, height=min_amplitude_change)
+    valleys, _ = find_peaks(-smoothed_signal, distance=MIN_PEAK_DISTANCE, height=min_amplitude_change)
+
+    # Return breath count and the filtered signal
+    return len(peaks), smoothed_signal
+
 
 # Shimmer thread initialization
 def shimmer_handler(pkt: DataPacket):
