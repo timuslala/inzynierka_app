@@ -147,16 +147,30 @@ def toggle_settings_visibility(n_clicks):
         Input("update-interval", "n_intervals"),
         Input("sliding-window-slider", "value"),
         Input("min-amplitude-slider", "value"),
+        Input("debug-toggle", "value"),
     ],
 )
-def update_all_outputs(n_intervals, window_size_seconds, min_amplitude_change):
+def update_all_outputs(n_intervals, window_size_seconds, min_amplitude_change, debug_toggle):
     buffer_size = int(window_size_seconds * SAMPLE_RATE)
+
+    # Pobieranie danych z buforów
     data = list(data_buffer)[-buffer_size:]
-    if len(data) < SAMPLE_RATE:
-        raise PreventUpdate
+    x_data = list(x_data_buffer)[-buffer_size:]
+    y_data = list(y_data_buffer)[-buffer_size:]
+    z_data = list(z_data_buffer)[-buffer_size:]
+
+    # Walidacja rozmiaru buforów
+    if len(data) < SAMPLE_RATE or len(x_data) < SAMPLE_RATE or len(y_data) < SAMPLE_RATE or len(z_data) < SAMPLE_RATE:
+        return dash.no_update
+
+    # Wykrywanie oddechów
     breath_count, filtered_signal = detect_breaths(data, SAMPLE_RATE, min_amplitude_change)
     breath_frequency = (breath_count / window_size_seconds) * 60
+
+    # Oś czasu
     time_axis = [i / SAMPLE_RATE for i in range(len(filtered_signal))]
+
+    # Tworzenie wykresu
     respiratory_figure = {
         "data": [
             {"x": time_axis, "y": filtered_signal, "type": "scattergl", "name": "Filtrowany Sygnał"},
@@ -170,9 +184,19 @@ def update_all_outputs(n_intervals, window_size_seconds, min_amplitude_change):
             "font": {"color": dark_style["color"]},
         },
     }
+
+    # Dodanie sygnałów x, y, z do wykresu, jeśli włączony debug
+    if "debug" in debug_toggle:
+        respiratory_figure["data"].extend([
+            {"x": time_axis, "y": x_data, "type": "scattergl", "name": "Sygnał X"},
+            {"x": time_axis, "y": y_data, "type": "scattergl", "name": "Sygnał Y"},
+            {"x": time_axis, "y": z_data, "type": "scattergl", "name": "Sygnał Z"},
+        ])
+
     breath_text = f"Liczba Wykrytych Oddechów: {breath_count}"
     frequency_text = f"Częstotliwość Oddechów: {breath_frequency:.2f} oddechów na minutę"
     return respiratory_figure, breath_text, frequency_text
+
 
 # Signal processing functions
 def butter_bandpass(lowcut, highcut, fs, order=4):
@@ -207,7 +231,11 @@ def shimmer_handler(pkt: DataPacket):
     accel_y = pkt[EChannelType.ACCEL_LSM303DLHC_Y] * 9.81 / 16000
     accel_z = pkt[EChannelType.ACCEL_LSM303DLHC_Z] * 9.81 / 16000
     absolute_acceleration = math.sqrt(accel_x**2 + accel_y**2 + accel_z**2)
+
     data_buffer.append(absolute_acceleration)
+    x_data_buffer.append(accel_x)
+    y_data_buffer.append(accel_y)
+    z_data_buffer.append(accel_z)
 
 def shimmer_thread():
     serial = Serial("COM6", DEFAULT_BAUDRATE)
