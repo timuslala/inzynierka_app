@@ -10,10 +10,6 @@ import numpy as np
 import scipy.signal as signal
 import pandas as pd
 
-
-
-
-
 def handler(pkt: DataPacket) -> None:
     global accels
     # Wyciągnij wartości z `pkt`
@@ -33,8 +29,6 @@ def handler(pkt: DataPacket) -> None:
 
     accels.append((accel_x, accel_y, accel_z, absolute_acceleration))
 
-
-
 if __name__ == '__main__':
     global accels
     accels = []
@@ -53,6 +47,6 @@ if __name__ == '__main__':
     time.sleep(60)
     shim_dev.stop_streaming()
     accels = pd.DataFrame(accels, columns=['accel_x', 'accel_y', 'accel_z', 'accel_absolute'])
-    accels.to_pickle("./accels4.pkl")
+    accels.to_pickle("./accels10.pkl")
     shim_dev.shutdown()
 

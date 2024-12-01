@@ -5,12 +5,17 @@ from dash.exceptions import PreventUpdate
 import threading
 import time
 from collections import deque
+import csv
+from datetime import datetime
 import numpy as np
 import math
 from serial import Serial
 from scipy.signal import butter, filtfilt, find_peaks
 from pyshimmer import ShimmerBluetooth, DEFAULT_BAUDRATE, DataPacket, EChannelType
 from pyshimmer.dev.channels import ESensorGroup
+
+alerts = []
+last_breath_time = time.time()
 
 # Parameters
 SAMPLE_RATE = 48.72  # Hz
@@ -118,10 +123,24 @@ app.layout = html.Div(
             ],
             style={"margin-top": "20px", "display": "none"},  # Initially hidden
         ),
+        html.Div(
+            id="alerts-container",
+            children=[
+                html.H2("Alerty", style={"margin-top": "20px", "color": "#f00"}),
+                html.Div(id="alerts-list", style={"max-height": "200px", "overflow-y": "auto"})
+            ],
+            style={"padding": "20px", "background-color": "#2e2e2e", "border": "1px solid #444", "border-radius": "5px"}
+        ),
         dcc.Interval(id="update-interval", interval=1000, n_intervals=0),
     ],
     style=dark_style,
 )
+@app.callback(
+    Output("alerts-list", "children"),
+    Input("update-interval", "n_intervals"),
+)
+def update_alerts(_):
+    return [html.Div(f"[{alert['timestamp']}] {alert['message']}") for alert in alerts[-10:]]
 
 # Callback to toggle ustawienia container visibility
 @app.callback(
@@ -150,6 +169,7 @@ def toggle_settings_visibility(n_clicks):
         Input("debug-toggle", "value"),
     ],
 )
+
 def update_all_outputs(n_intervals, window_size_seconds, min_amplitude_change, debug_toggle):
     buffer_size = int(window_size_seconds * SAMPLE_RATE)
 
@@ -197,6 +217,15 @@ def update_all_outputs(n_intervals, window_size_seconds, min_amplitude_change, d
     frequency_text = f"Częstotliwość Oddechów: {breath_frequency:.2f} oddechów na minutę"
     return respiratory_figure, breath_text, frequency_text
 
+def log_alert(message):
+    timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    alert_entry = {"timestamp": timestamp, "message": message}
+    alerts.append(alert_entry)
+    with open("alerts.csv", "a", newline="") as file:
+        writer = csv.DictWriter(file, fieldnames=["timestamp", "message"])
+        if file.tell() == 0:  # Add header only if file is empty
+            writer.writeheader()
+        writer.writerow(alert_entry)
 
 # Signal processing functions
 def butter_bandpass(lowcut, highcut, fs, order=4):
@@ -209,21 +238,27 @@ def bandpass_filter(data, lowcut, highcut, fs, order=4):
     b, a = butter_bandpass(lowcut, highcut, fs, order=order)
     return filtfilt(b, a, data)
 
-
 def detect_breaths(data, sample_rate, min_amplitude_change):
+    global last_breath_time
+
     # Apply bandpass filter
     filtered_signal = bandpass_filter(data, LOW_CUT, HIGH_CUT, sample_rate)
 
     # Smooth the signal with a moving average
     smoothed_signal = np.convolve(filtered_signal, np.ones(5) / 5, mode='same')
 
-    # Find peaks and valleys
+    # Find peaks
     peaks, _ = find_peaks(smoothed_signal, distance=MIN_PEAK_DISTANCE, height=min_amplitude_change)
-    valleys, _ = find_peaks(-smoothed_signal, distance=MIN_PEAK_DISTANCE, height=min_amplitude_change)
 
-    # Return breath count and the filtered signal
+    if len(peaks) > 0:
+        last_breath_time = time.time()
+
+    NO_BREATH_THRESHOLD = 10
+    # Check for no-breath alert
+    if time.time() - last_breath_time > NO_BREATH_THRESHOLD:
+        log_alert("Brak oddechu przez ponad 10 sekund!")
+
     return len(peaks), smoothed_signal
-
 
 # Shimmer thread initialization
 def shimmer_handler(pkt: DataPacket):
