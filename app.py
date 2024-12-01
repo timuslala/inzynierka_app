@@ -238,9 +238,11 @@ def bandpass_filter(data, lowcut, highcut, fs, order=4):
     b, a = butter_bandpass(lowcut, highcut, fs, order=order)
     return filtfilt(b, a, data)
 
-def detect_breaths(data, sample_rate, min_amplitude_change):
-    global last_breath_time
+import numpy as np
+import time
+from scipy.signal import find_peaks
 
+def detect_breaths(data, sample_rate, min_amplitude_change):
     # Apply bandpass filter
     filtered_signal = bandpass_filter(data, LOW_CUT, HIGH_CUT, sample_rate)
 
@@ -250,15 +252,19 @@ def detect_breaths(data, sample_rate, min_amplitude_change):
     # Find peaks
     peaks, _ = find_peaks(smoothed_signal, distance=MIN_PEAK_DISTANCE, height=min_amplitude_change)
 
-    if len(peaks) > 0:
-        last_breath_time = time.time()
+    # Determine the time window for the last 10 seconds in samples
+    samples_in_10_seconds = int(10 * sample_rate)
+    recent_signal = smoothed_signal[-samples_in_10_seconds:]  # Extract the last 10 seconds of signal
 
-    NO_BREATH_THRESHOLD = 10
+    # Find peaks in the recent signal
+    recent_peaks, _ = find_peaks(recent_signal, distance=MIN_PEAK_DISTANCE, height=min_amplitude_change)
+
     # Check for no-breath alert
-    if time.time() - last_breath_time > NO_BREATH_THRESHOLD:
-        log_alert("Brak oddechu przez ponad 10 sekund!")
+    if len(recent_peaks) == 0:
+        log_alert("Brak oddechu przez ostatnie 10 sekund!")
 
     return len(peaks), smoothed_signal
+
 
 # Shimmer thread initialization
 def shimmer_handler(pkt: DataPacket):
